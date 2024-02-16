@@ -1,0 +1,23 @@
+{
+  "visual": {
+    "name": "Polar Area Chart",
+    "displayName": "Polar Area Chart Vuurmans",
+    "guid": "PBI_CV_b456ab50_b655_4ef9_b65e_6c20e29ca3d7",
+    "visualClassName": "PolarAreaChart",
+    "version": "1.0.0.0",
+    "description": "Custom Polar Area Chart using ChartJS, including two outer circles allowing for twofold categorization.",
+    "supportUrl": "https://vuurmansconsultancy.nl",
+    "gitHubUrl": ""
+  },
+  "apiVersion": "5.4.0",
+  "author": {
+    "name": "Gina Stolwijk - Formiga Online Solutions",
+    "email": "gina@formigaonline.solutions"
+  },
+  "assets": {
+    "icon": "assets/polar_area_chart.png"
+  },
+  "externalJS": [],
+  "style": "style/visual.less",
+  "capabilities": "capabilities.json"
+}
