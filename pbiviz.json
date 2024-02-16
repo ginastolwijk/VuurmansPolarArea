@@ -2,7 +2,7 @@
   "visual": {
     "name": "Polar Area Chart",
     "displayName": "Polar Area Chart Vuurmans",
-    "guid": "PBI_CV_b456ab50_b655_4ef9_b65e_6c20e29ca3d7",
+    "guid": "PBI_CV_6a885f4a_d137_4196_9d5b_c324d62a4a47",
     "visualClassName": "PolarAreaChart",
     "version": "1.0.0.0",
     "description": "Custom Polar Area Chart using ChartJS, including two outer circles allowing for twofold categorization.",
