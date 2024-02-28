@@ -11,12 +11,17 @@ import VisualConstructorOptions = powerbiVisualsApi.extensibility.visual.VisualC
 import VisualUpdateOptions = powerbiVisualsApi.extensibility.visual.VisualUpdateOptions;
 import DataView = powerbiVisualsApi.DataView;
 
+// Selection manager
+import ISelectionManager = powerbi.extensibility.ISelectionManager;
+
 // Chart.js custom visual
 export class PolarAreaChart implements IVisual {
     private chart: Chart<any, any, any>;
     private host: powerbiVisualsApi.extensibility.visual.IVisualHost;
     private canvas: HTMLCanvasElement;
     private categoryName = "";
+    private selectionManager: ISelectionManager;
+    private target: HTMLElement;
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //// CHART PLUGINS ////
@@ -84,16 +89,31 @@ export class PolarAreaChart implements IVisual {
     private bgColorCategory30: string = '#d3d3d3';
     private fontOuterCircle: string = 'arial';
 
+    // Padding calculation
+    private calculatePercentagePadding(chart) {
+        
+        const chartArea = chart.chartArea;
+        const innerRadius = Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 2; 
+        const outerRadius = innerRadius + Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 14 * 1;
+        const fullOuterRadius = outerRadius + Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 14 * 1;
+
+        // Calculate padding based on the outer circle's radius
+        // Ensuring the outer circle fits within the canvas
+        const requiredPadding = (fullOuterRadius-innerRadius)*1.2; 
+
+        return requiredPadding;
+    }
 
     // 1. DRAW TYPE LABELS (HELPER FUNCTION)
     private drawTypeLabel(ctx, chartArea, angle, innerRadius, outerRadius, label) {
         const centerX = chartArea.left + (chartArea.right - chartArea.left) / 2;
         const centerY = chartArea.top + (chartArea.bottom - chartArea.top) / 2;
         const labelRadius = (innerRadius + outerRadius) / 2;
+        const labelText = label.trimEnd();
 
         // Calculate position for each letter
-        for (let i = 0; i < label.length; i++) {
-            const charAngle = angle + (i - label.length / 2) * 0.05;
+        for (let i = 0; i < labelText.length; i++) {
+            const charAngle = angle + (i - labelText.length / 2) * 0.035;
 
             // Rotate text by 180 degrees if it's in the bottom half of the circle
             let rotationAngle = charAngle;
@@ -102,7 +122,7 @@ export class PolarAreaChart implements IVisual {
             }
 
             // Continue
-            const fontSize = labelRadius / 20; // Adjust font size based on radius
+            const fontSize = labelRadius / 25; // Adjust font size based on radius
             const labelX = centerX + labelRadius * Math.cos(charAngle);
             const labelY = centerY + labelRadius * Math.sin(charAngle);
             ctx.save();
@@ -113,9 +133,9 @@ export class PolarAreaChart implements IVisual {
             ctx.font = `${fontSize}px ${this.fontOuterCircle}`;
             ctx.fillStyle = 'black';
             if (angle > 0 && angle < Math.PI) { // If lower half, get last letter first and vice versa
-                ctx.fillText(label[label.length-1-i], 0, 0);
+                ctx.fillText(labelText[labelText.length-1-i], 0, 0);
             }else{
-                ctx.fillText(label[i], 0, 0);
+                ctx.fillText(labelText[i], 0, 0);
             }
             ctx.restore();
         }
@@ -210,7 +230,6 @@ export class PolarAreaChart implements IVisual {
     }
 
     private drawTypesNames(chart,ctx,chartArea,outerRadius,fullOuterRadius){
-        
         // Draw type labels
         let previousType = null;
         const typeAngles = new Map();
@@ -220,11 +239,24 @@ export class PolarAreaChart implements IVisual {
             dataset.data.forEach((value, index) => {
                 const currentType = dataset.dataType[index];
                 const angle = segmentAngleType * index - Math.PI / 2;
-                if (!typeAngles.has(currentType)) {
-                    typeAngles.set(currentType, { start: angle, count: 0 });
+                const currentTypeIndex = `${currentType}${' '.repeat(index)}`;
+                let hasCurrentType = 0;
+                if (currentType !== previousType) {  // !typeAngles.has(currentType)
+                    if(!typeAngles.has(currentType)){
+                        typeAngles.set(currentType, { start: angle, count: 0 });
+                        hasCurrentType = 0;
+                    }else{
+                        typeAngles.set(currentTypeIndex, { start: angle, count: 0 });
+                        hasCurrentType = 1;
+                    }
                 }
-                typeAngles.get(currentType).end = segmentAngleType * (index+1) - Math.PI / 2;
-                typeAngles.get(currentType).count++;
+                if(hasCurrentType === 0){
+                    typeAngles.get(currentType).end = segmentAngleType * (index+1) - Math.PI / 2;
+                    typeAngles.get(currentType).count++;
+                }else{
+                    typeAngles.get(currentTypeIndex).end = segmentAngleType * (index+1) - Math.PI / 2;
+                    typeAngles.get(currentTypeIndex).count++;
+                }
                 if (currentType !== previousType) {
                     this.drawAngleLine(ctx, chartArea, angle, outerRadius, fullOuterRadius);
                 }
@@ -239,111 +271,108 @@ export class PolarAreaChart implements IVisual {
 
     // 5. CREATE THE PLUGINS
     private drawOuterCirclePlugin(chart) {
-        
-        const ctx = chart.ctx;
-        const chartArea = chart.chartArea;
-        const centerX = chartArea.left + (chartArea.right - chartArea.left) / 2;
-        const centerY = chartArea.top + (chartArea.bottom - chartArea.top) / 2;
-        const innerRadius = Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 2; 
-        const outerRadius = innerRadius + Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 14 * 1;
-        const fullOuterRadius = outerRadius + Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 14 * 1;
-        const segmentAngleFull = 2 * Math.PI / chart.data.labels.length;
+        if(chart){
+            const ctx = chart.ctx;
+            const chartArea = chart.chartArea;
+            const centerX = chartArea.left + (chartArea.right - chartArea.left) / 2;
+            const centerY = chartArea.top + (chartArea.bottom - chartArea.top) / 2;
+            const innerRadius = Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 2; 
+            const outerRadius = innerRadius + Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 14 * 1;
+            const fullOuterRadius = outerRadius + Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 14 * 1;
+            const segmentAngleFull = 2 * Math.PI / chart.data.labels.length;
 
-        // Color full (i.e., most) outer circle with the background color(s) from the format pane
-        chart.data.datasets.forEach((dataset) => {
-            for (let i = 0; i < chart.data.labels.length; i++) {
-                const startAngle = segmentAngleFull * i - Math.PI / 2;
-                const endAngle = startAngle + segmentAngleFull;
-                const color = dataset.backgroundColorType[i % dataset.backgroundColorType.length];
-                ctx.beginPath();
-                ctx.arc(centerX, centerY, outerRadius, startAngle, endAngle);
-                ctx.arc(centerX, centerY, fullOuterRadius, endAngle, startAngle, true);
-                ctx.closePath();
-                ctx.fillStyle = color; 
-                ctx.fill();
-            }
-        });
-
-        // Color the outer circle (i.e., inside full outer) with alpha 1 (i.e., no opacity)
-        chart.data.datasets.forEach((dataset) => {
-            for (let i = 0; i < chart.data.labels.length; i++) {
-                const startAngle = segmentAngleFull * i - Math.PI / 2;
-                const endAngle = startAngle + segmentAngleFull;
-                var color = "#fff";
-                try {
-                    color = this.adjustRgbaAlpha(dataset.backgroundColor[i % dataset.backgroundColor.length], 1);
-                } catch (error) {
-                    color = dataset.backgroundColor[i % dataset.backgroundColor.length];
+            // Color full (i.e., most) outer circle with the background color(s) from the format pane
+            chart.data.datasets.forEach((dataset) => {
+                for (let i = 0; i < chart.data.labels.length; i++) {
+                    const startAngle = segmentAngleFull * i - Math.PI / 2;
+                    const endAngle = startAngle + segmentAngleFull;
+                    let color = dataset.backgroundColorType[i % dataset.backgroundColorType.length];
+                    if(color === null){color = this.hexToRgba('#d3d3d3',1);}
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, outerRadius, startAngle, endAngle);
+                    ctx.arc(centerX, centerY, fullOuterRadius, endAngle, startAngle, true);
+                    ctx.closePath();
+                    ctx.fillStyle = color; 
+                    ctx.fill();
                 }
+            });
+
+            // Color the outer circle (i.e., inside full outer) with alpha 1 (i.e., no opacity)
+            chart.data.datasets.forEach((dataset) => {
+                for (let i = 0; i < chart.data.labels.length; i++) {
+                    const startAngle = segmentAngleFull * i - Math.PI / 2;
+                    const endAngle = startAngle + segmentAngleFull;
+                    let color = this.hexToRgba('#d3d3d3',0.5);
+                    if(dataset.backgroundColor[i % dataset.backgroundColor.length] !== null){
+                        try { color = this.adjustRgbaAlpha(dataset.backgroundColor[i % dataset.backgroundColor.length], 1); } catch (error) { color = dataset.backgroundColor[i % dataset.backgroundColor.length]; }
+                    }
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, innerRadius, startAngle, endAngle);
+                    ctx.arc(centerX, centerY, outerRadius, endAngle, startAngle, true);
+                    ctx.closePath();
+                    ctx.fillStyle = color;
+                    ctx.fill();
+                }
+            });
+
+            // Draw the full (i.e., most) outer circle
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, fullOuterRadius, 0, 2 * Math.PI);
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = 'black';
+            ctx.stroke();
+
+            // Draw lines between segments - outer
+            const segmentAngle = 2 * Math.PI / chart.data.labels.length;
+            for (let i = 0; i < chart.data.labels.length; i++) {
+                const angle = segmentAngle * i - Math.PI / 2;
+                const startX = centerX + innerRadius * Math.cos(angle);
+                const startY = centerY + innerRadius * Math.sin(angle);
+                const endX = centerX + outerRadius * Math.cos(angle);
+                const endY = centerY + outerRadius * Math.sin(angle);
                 ctx.beginPath();
-                ctx.arc(centerX, centerY, innerRadius, startAngle, endAngle);
-                ctx.arc(centerX, centerY, outerRadius, endAngle, startAngle, true);
-                ctx.closePath();
-                ctx.fillStyle = color;
-                ctx.fill();
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
             }
-        });
 
-        // Draw the full (i.e., most) outer circle
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, fullOuterRadius, 0, 2 * Math.PI);
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = 'black';
-        ctx.stroke();
+            // Draw the outer circle (i.e., inside full outer)
+            ctx.save();
+            [outerRadius, innerRadius].forEach(radius => {
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = 'black';
+                ctx.stroke();
+            });
 
-        // Draw the outer circle (i.e., inside full outer)
-        ctx.save();
-        [outerRadius, innerRadius].forEach(radius => {
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-            ctx.lineWidth = 1.5;
-            ctx.strokeStyle = 'black';
-            ctx.stroke();
-        });
+            // Draw lines between segments - inner
+            for (let i = 0; i < chart.data.labels.length; i++) {
+                const angle = segmentAngle * i - Math.PI / 2;
+                const startX = centerX;
+                const startY = centerY;
+                const endX = centerX + innerRadius * Math.cos(angle);
+                const endY = centerY + innerRadius * Math.sin(angle);
+                ctx.beginPath();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = 'black';
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+            }
 
-        // Draw lines between segments - outer
-        const segmentAngle = 2 * Math.PI / chart.data.labels.length;
-        for (let i = 0; i < chart.data.labels.length; i++) {
-            const angle = segmentAngle * i - Math.PI / 2;
-            const startX = centerX + innerRadius * Math.cos(angle);
-            const startY = centerY + innerRadius * Math.sin(angle);
-            const endX = centerX + outerRadius * Math.cos(angle);
-            const endY = centerY + outerRadius * Math.sin(angle);
-            ctx.beginPath();
-            ctx.moveTo(startX, startY);
-            ctx.lineTo(endX, endY);
-            ctx.stroke();
-        }
+            // Draw names
+            this.drawCategoryNames(chart,segmentAngle,centerX,centerY,innerRadius,outerRadius,ctx);
+            if(chart.data.datasets[0]){
+                if(chart.data.datasets[0].dataType[0] !== null){
+                    this.drawTypesNames(chart,ctx,chartArea,outerRadius,fullOuterRadius);
+                }
+            }
 
-        // Draw lines between segments - inner
-        for (let i = 0; i < chart.data.labels.length; i++) {
-            const angle = segmentAngle * i - Math.PI / 2;
-            const startX = centerX;
-            const startY = centerY;
-            const endX = centerX + innerRadius * Math.cos(angle);
-            const endY = centerY + innerRadius * Math.sin(angle);
-            ctx.beginPath();
-            ctx.lineWidth = 1.5;
-            ctx.strokeStyle = 'black';
-            ctx.moveTo(startX, startY);
-            ctx.lineTo(endX, endY);
-            ctx.stroke();
-        }
-
-        // Draw category names
-        this.drawCategoryNames(chart,segmentAngle,centerX,centerY,innerRadius,outerRadius,ctx);
-
-        // Draw types names 
-        this.drawTypesNames(chart,ctx,chartArea,outerRadius,fullOuterRadius);
-
-        // Draw second measure lines
-        try {
-            this.drawSecondMeasureLines(chart, ctx, chart.data.datasets[0].secondValues);
-        } catch (error) {
-            
-        }
-        
-        ctx.restore();
+            // Draw second measure lines
+            try { this.drawSecondMeasureLines(chart, ctx, chart.data.datasets[0].secondValues); } catch (error) { console.log("No second measure")}
+            ctx.restore();
+        }        
     } 
 
     // This function is called by the plugin to draw additional elements like the second measure line
@@ -375,18 +404,73 @@ export class PolarAreaChart implements IVisual {
             ctx.stroke();
         });
     }
-
+    
     
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //// CONSTRUCTOR ////
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    private colored = -1;  // Start colored yes/no for filter out
+
     constructor(options: VisualConstructorOptions) {
         this.host = options.host;
-
-        // Create a canvas element
         this.canvas = document.createElement('canvas');
         options.element.appendChild(this.canvas);
+
+        // On click > Filter out
+        this.canvas.addEventListener('click', (event) => {
+            
+            // Initialize the selectionManager if it's not already done
+            if (!this.selectionManager) {
+                this.selectionManager = this.host.createSelectionManager();
+            }
+            
+            // Get the elements at the clicked position
+            const elements = this.chart.getElementsAtEventForMode(event, 'nearest', { intersect: true }, false);
+            if (elements.length > 0) {
+                const firstElement = elements[0];
+                const datasetIndex = firstElement.datasetIndex;
+                const dataIndex = firstElement.index;
+                const dataPoint = this.chart.data.datasets[datasetIndex].selectionId[dataIndex];
+                
+                // Apply filter to other visuals based on the selection
+                if (dataPoint && dataPoint.selection) {
+                    this.selectionManager.select(dataPoint.selection).then(() => {
+                        this.chart.data.datasets[0].backgroundColor.forEach((color, index) => {
+                            if (index === dataIndex) {
+                                if (dataIndex !== this.colored) {
+                                    this.chart.data.datasets[datasetIndex].backgroundColor[dataIndex] = this.adjustRgbaAlpha(this.chart.data.datasets[datasetIndex].backgroundColor[dataIndex],1);
+                                    this.colored = dataIndex;
+                                }else{
+                                    this.chart.data.datasets[datasetIndex].backgroundColor[dataIndex] = this.adjustRgbaAlpha(this.chart.data.datasets[datasetIndex].backgroundColor[dataIndex],0.5);
+                                    this.colored = -1;
+                                }
+                            }else{
+                                this.chart.data.datasets[0].backgroundColor[index] = this.adjustRgbaAlpha(this.chart.data.datasets[0].backgroundColor[index],0.5);
+                            }
+                        });
+                    }).catch((error) => { console.error('Error applying filter:', error); });
+                }else{
+                    this.colored = -1;
+                }
+            } else {
+                this.selectionManager.clear().then(() => { // Click outside element > clear
+                    try {
+                        this.chart.data.datasets[0].backgroundColor.forEach((color, index) => {
+                            this.chart.data.datasets[0].backgroundColor[index] = this.adjustRgbaAlpha(this.chart.data.datasets[0].backgroundColor[index],0.5);
+                        });
+                    } catch (error) {
+                        console.log('no bg colors yet')
+                    }
+                }).catch((error) => { console.error('Error clearing selection:', error); });
+                this.colored = -1;
+            }
+        });
+
+        // Context menu
+        this.contextMenuStart();
+
+        // Create chart
         this.chart = new Chart(this.canvas.getContext('2d'), {
             type: 'polarArea',
             data: null,
@@ -394,9 +478,7 @@ export class PolarAreaChart implements IVisual {
                 devicePixelRatio: 3,
                 responsive: true,
                 maintainAspectRatio: false,
-                layout: {
-                    padding: 90
-                },
+                layout: { padding: 100 },
                 scales: {
                     r: {
                         min: 0,
@@ -405,12 +487,8 @@ export class PolarAreaChart implements IVisual {
                     }
                 },
                 plugins: {
-                    legend: {
-                        display: false,
-                    },
-                    tooltip: {
-                        enabled: true
-                    },
+                    legend: { display: false, },
+                    tooltip: { enabled: true, },
                     datalabels: {
                         anchor: 'end',
                         borderColor: 'white',
@@ -418,9 +496,7 @@ export class PolarAreaChart implements IVisual {
                         borderRadius: 5,
                         borderWidth: 1,
                         color: 'white',
-                        font: {
-                            weight: 'bold'
-                        },
+                        font: { weight: 'bold' },
                         formatter: Math.round,
                         padding: 6
                     }                           
@@ -431,11 +507,36 @@ export class PolarAreaChart implements IVisual {
                     id: 'outerCircleAndLabelsPlugin',
                     afterDatasetsDraw: chart => this.drawOuterCirclePlugin(chart) 
                 },
+                {
+                    id: 'dynamicPadding',
+                    afterDraw: (chart) => {
+                        const padding = this.calculatePercentagePadding(chart);
+                        chart.options.layout.padding = padding;
+                    }
+                },
                 ChartDataLabels
             ],
         });
     }
 
+    private contextMenuStart(){
+        // Context menu
+        this.canvas.oncontextmenu = (event) => {
+            event.preventDefault();
+            this.selectionManager = this.host.createSelectionManager();
+            const elements = this.chart.getElementsAtEventForMode(event, 'nearest', { intersect: true }, false);
+            if (elements.length > 0) {
+                const firstElement = elements[0];
+                const datasetIndex = firstElement.datasetIndex;
+                const dataIndex = firstElement.index;
+                const dataPoint = this.chart.data.datasets[datasetIndex].selectionId[dataIndex];
+                this.selectionManager.showContextMenu(dataPoint? dataPoint.selection : {}, {
+                    x: event.clientX,
+                    y: event.clientY
+                  });
+            }
+        };
+    }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //// UPDATE ////
@@ -443,11 +544,43 @@ export class PolarAreaChart implements IVisual {
 
     public update(options: VisualUpdateOptions) {
 
+        console.log('we will start the update')
+
         const dataView: DataView = options.dataViews && options.dataViews[0];
         if (!dataView) return;
 
         // Transform data from Power BI to Chart.js format
         const transformedData = this.transformData(dataView);
+
+        // Categories > for each we'll add the categorySelectionId (after sorting!)
+        const categories = dataView.categorical.categories;
+        const originalValues = categories[0].values;
+        const sortedLabels = transformedData.labels;
+        const originalIdentities = categories[0].identity;
+        const sortMapping = new Map();
+        sortedLabels.forEach((label, sortedIndex) => {
+            const originalIndex = originalValues.findIndex(originalLabel => originalLabel === label);
+            sortMapping.set(originalIndex, sortedIndex);
+        });
+        const sortedIdentities = Array.from(sortMapping.keys()).sort((a, b) => sortMapping.get(a) - sortMapping.get(b)).map(index => originalIdentities[index]);
+        categories[0].identity = sortedIdentities;
+        categories[0].values = sortedLabels; 
+
+        // const categories = transformedData.order;
+        const categoriesCount = categories[0].values.length;
+        for (let categoryIndex = 0; categoryIndex < categoriesCount; categoryIndex++) {
+            const categoryValue: powerbi.PrimitiveValue = categories[0].values[categoryIndex];
+            const categorySelectionId = this.host.createSelectionIdBuilder()
+                .withCategory(categories[0], categoryIndex)
+                .createSelectionId();
+            transformedData.selectionId[categoryIndex] = {
+                value: categoryValue,
+                selection: categorySelectionId
+            };
+        }
+
+        transformedData.colorsType = transformedData.colorsType.map(color => color === null ? '#fff' : color);
+        transformedData.colors = transformedData.colors.map(color => color === null ? 'rgba(211, 211, 211, 0.5)' : color);
 
         // Update chart data
         this.chart.data = {
@@ -459,8 +592,23 @@ export class PolarAreaChart implements IVisual {
                 backgroundColor: transformedData.colors,
                 backgroundColorType: transformedData.colorsType,
                 dataType: transformedData.types,
+                selectionId: transformedData.selectionId
             }]
         };
+
+        // Find the maximum value in the dataset to dynamically set the scale
+        const maxDataValue = Math.max(...transformedData.values, ...transformedData.secondValues);
+        const maxScaleValue = Math.ceil(maxDataValue / 10) * 10; 
+
+        // Dynamically set the max property of the r scale
+        if(maxScaleValue > 100){
+            this.chart.options.scales.r.max = maxScaleValue;
+            this.chart.options.scales.r.ticks.stepSize = maxScaleValue / 5; 
+        }else{
+            this.chart.options.scales.r.max = 100;
+            this.chart.options.scales.r.ticks.stepSize = 20; 
+        }
+
         this.chart.update();
     }
 
@@ -492,6 +640,12 @@ export class PolarAreaChart implements IVisual {
                         secondMeasureValues[index] = value; // Assign to second measure
                     }
                 });
+                // Color first measure
+                categories.forEach((value, index) => {
+                    const category = String(value);
+                    categories[index] = category;
+                    colors[index] = this.hexToRgba(this.getColorForCategory(category), 0.5);
+                });
             } else if (valueColumn.source.roles.order) {
                 orderValues = valueColumn.values.map(value => Number(value));
             } else if (valueColumn.source.roles.type) {
@@ -499,11 +653,6 @@ export class PolarAreaChart implements IVisual {
                     const type = String(value);
                     types[index] = type;
                     colorsType[index] = this.getColorForType(type);
-                });
-                categories.forEach((value, index) => {
-                    const category = String(value);
-                    categories[index] = category;
-                    colors[index] = this.hexToRgba(this.getColorForCategory(category), 0.5);
                 });
             }
         });
@@ -521,7 +670,8 @@ export class PolarAreaChart implements IVisual {
             color: colors[index],
             colorType: colorsType[index],
             type: types[index],
-            order: orderValues[index] || 0 // Default to 0 if no order value
+            order: orderValues[index] || 0, // Default to 0 if no order value
+            selectionId: {}
         }));
 
         // Sort the combined data based on order values
@@ -534,14 +684,23 @@ export class PolarAreaChart implements IVisual {
         const sortedColorsType = combinedData.map(item => item.colorType);
         const sortedTypes = combinedData.map(item => item.type);
         const sortedSecondValues = combinedData.map(item => item.secondValue);
+        const sortedselectionId = combinedData.map(item => item.selectionId);
 
         return {
             labels: sortedCategories,
             values: sortedValues,
+            selectionId: sortedselectionId,
             colors: sortedColors,
             colorsType: sortedColorsType,
             types: sortedTypes,
-            secondValues: sortedSecondValues
+            secondValues: sortedSecondValues,
+            labelsPresort: sortedCategories,
+            valuesPresort: sortedValues,
+            selectionIdPresort: sortedselectionId,
+            colorsPresort: sortedColors,
+            colorsTypePresort: sortedColorsType,
+            typesPresort: sortedTypes,
+            secondValuesPresort: sortedSecondValues
         };
     }
 
@@ -560,31 +719,6 @@ export class PolarAreaChart implements IVisual {
             const colorsType = new Array(categories_temp.length).fill(null);
             const types_temp = new Array(categories_temp.length).fill(null);
 
-            // Update color property names based on unique types
-            dataView.categorical.values.forEach(valueColumn => {
-                if (valueColumn.source.roles.type) {
-                    valueColumn.values.forEach((value, index) => {
-                        const type = String(value);
-                        types_temp[index] = type;
-                        colorsType[index] = this.getColorForType(type);
-                    });
-                }
-            });
-
-            // const types_temp = dataView.categorical.categories[0].values.map(value => String(value));
-            this.uniqueTypes.forEach((type, index) => {
-                const propName = `bgColorType${index + 1}`; // Dynamically create the property name
-                if (Object.prototype.hasOwnProperty.call(outerCircleProperties, propName)) {
-                    const bgColorPropertyValue = outerCircleProperties[propName];
-                    if (typeof bgColorPropertyValue['solid']['color'] === 'string') {
-                        this[propName] = bgColorPropertyValue['solid']['color'];
-                    } else {
-                        this[propName] = '#fff'; // Default color
-                    }
-                    this.colorPalette[index] = this[propName];
-                }
-            });
-
             // Update color property names based on unique categories
             categories_temp.forEach((category, index) => {
                 const propName = `bgColorCategory${index + 1}`; // Dynamically create the property name
@@ -598,7 +732,7 @@ export class PolarAreaChart implements IVisual {
                     this.colorPaletteInner[index] = this[propName];
                 }
             });
-    
+
             // Check if the font property exists in the formatting properties
             if (Object.prototype.hasOwnProperty.call(outerCircleProperties, 'fontFamily')) {
                 const FontTypePropertyValue = outerCircleProperties['fontFamily'];
@@ -608,8 +742,33 @@ export class PolarAreaChart implements IVisual {
                     this.fontOuterCircle = 'Arial'; // Default font
                 }
             }
+
+            // Update color property names based on unique types
+            dataView.categorical.values.forEach(valueColumn => {
+                if (valueColumn.source.roles.type) {
+                    valueColumn.values.forEach((value, index) => {
+                        const type = String(value);
+                        types_temp[index] = type;
+                        colorsType[index] = this.getColorForType(type);
+                    });
+                }
+            });
+        
+            // const types_temp = dataView.categorical.categories[0].values.map(value => String(value));
+            this.uniqueTypes.forEach((type, index) => {
+                const propName = `bgColorType${index + 1}`; // Dynamically create the property name
+                if (Object.prototype.hasOwnProperty.call(outerCircleProperties, propName)) {
+                    const bgColorPropertyValue = outerCircleProperties[propName];
+                    if (typeof bgColorPropertyValue['solid']['color'] === 'string') {
+                        this[propName] = bgColorPropertyValue['solid']['color'];
+                    } else {
+                        this[propName] = '#fff'; // Default color
+                    }
+                    this.colorPalette[index] = this[propName];
+                }
+            });
         }
-        this.chart.update();
+        this.update;
     }
 
     public getFormattingModel(): powerbi.visuals.FormattingModel {
@@ -652,22 +811,24 @@ export class PolarAreaChart implements IVisual {
         };
 
         // Generate color slices dynamically based on the unique types
-        this.uniqueTypes.forEach((type, index) => {
-            group2_dataDesign.slices.push({
-                displayName: `${type}`,
-                uid: `outerCircle_dataDesign_bgColor_slice${index + 1}`,
-                control: {
-                    type: powerbi.visuals.FormattingComponent.ColorPicker,
-                    properties: {
-                        descriptor: {
-                            objectName: "outerCircles",
-                            propertyName: `bgColorType${index + 1}`
-                        },
-                        value: { value: this[`bgColorType${index + 1}`] }
+        if(this.uniqueTypes.length !== 0){
+            this.uniqueTypes.forEach((type, index) => {
+                group2_dataDesign.slices.push({
+                    displayName: `${type}`,
+                    uid: `outerCircle_dataDesign_bgColor_slice${index + 1}`,
+                    control: {
+                        type: powerbi.visuals.FormattingComponent.ColorPicker,
+                        properties: {
+                            descriptor: {
+                                objectName: "outerCircles",
+                                propertyName: `bgColorType${index + 1}`
+                            },
+                            value: { value: this[`bgColorType${index + 1}`] }
+                        }
                     }
-                }
+                });
             });
-        });
+        }
 
         // Building formatting group "Color Group"
         const group3_dataDesign: powerbi.visuals.FormattingGroup = {
@@ -677,22 +838,24 @@ export class PolarAreaChart implements IVisual {
         };
 
         // Generate color slices dynamically based on the unique categories
-        this.uniqueCategories.forEach((category, index) => { 
-            group3_dataDesign.slices.push({
-                displayName: `${category}`,
-                uid: `outerCircle_dataDesign_bgColor2_slice${index + 1}`,
-                control: {
-                    type: powerbi.visuals.FormattingComponent.ColorPicker,
-                    properties: {
-                        descriptor: {
-                            objectName: "outerCircles",
-                            propertyName: `bgColorCategory${index + 1}`
-                        },
-                        value: { value: this[`bgColorCategory${index + 1}`] }
+        if(this.uniqueCategories.length !== 0){
+            this.uniqueCategories.forEach((category, index) => { 
+                group3_dataDesign.slices.push({
+                    displayName: `${category}`,
+                    uid: `outerCircle_dataDesign_bgColor2_slice${index + 1}`,
+                    control: {
+                        type: powerbi.visuals.FormattingComponent.ColorPicker,
+                        properties: {
+                            descriptor: {
+                                objectName: "outerCircles",
+                                propertyName: `bgColorCategory${index + 1}`
+                            },
+                            value: { value: this[`bgColorCategory${index + 1}`] }
+                        }
                     }
-                }
+                });
             });
-        });
+        }
 
         // Add formatting groups to data card
         outerCircles.groups.push(group1_dataFont);
@@ -734,7 +897,7 @@ export class PolarAreaChart implements IVisual {
         // Return the color corresponding to the type index
         return this.colorPaletteInner[index % this.colorPaletteInner.length];
     }
-    
+
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //// HELPER FUNCTIONS ////
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
