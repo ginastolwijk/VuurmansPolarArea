@@ -547,16 +547,22 @@ export class PolarAreaChart implements IVisual {
     //// UPDATE ////
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    private categories_org_order = [];
+
     public update(options: VisualUpdateOptions) {
         
         const dataView: DataView = options.dataViews && options.dataViews[0];
         if (!dataView) return;
 
+        const categories = dataView.categorical.categories;
+        if(this.categories_org_order.length === 0){
+            this.categories_org_order = categories[0].values;
+        }
+
         // Transform data from Power BI to Chart.js format
         const transformedData = this.transformData(dataView);
 
         // Categories > for each we'll add the categorySelectionId (after sorting!)
-        const categories = dataView.categorical.categories;
         const originalValues = categories[0].values;
         const sortedLabels = transformedData.labels;
         const originalIdentities = categories[0].identity;
@@ -624,9 +630,27 @@ export class PolarAreaChart implements IVisual {
 
         // First update formatting properties
         this.updateFormattingProperties(dataView.metadata.objects, dataView);
+
+        let categories;
+        try {
+            // Retrieve current categories from dataView
+            categories = dataView.categorical.categories[0].values.map(value => String(value));
+            // Attempt to sort categories based on the original order in this.categories_org_order
+            categories.sort((a, b) => {
+                let indexA = this.categories_org_order.indexOf(a);
+                let indexB = this.categories_org_order.indexOf(b);
+
+                // Handling categories not found in the original order (-1 comparison result)
+                if (indexA === -1) indexA = Number.MAX_SAFE_INTEGER;
+                if (indexB === -1) indexB = Number.MAX_SAFE_INTEGER;
+
+                return indexA - indexB;
+            });
+        } catch (error) {
+            // Fallback to original order from dataView if sorting fails
+            categories = dataView.categorical.categories[0].values.map(value => String(value));
+        }
         
-        // this.categoryName = dataView.metadata.columns.find(col => col.roles && col.roles.category).displayName;
-        const categories = dataView.categorical.categories[0].values.map(value => String(value));
         const colors = new Array(categories.length).fill(null);
         const colorsType = new Array(categories.length).fill(null);
         let orderValues = new Array(categories.length).fill(null);
@@ -667,7 +691,7 @@ export class PolarAreaChart implements IVisual {
 
         // Combine categories, values, colors, and order into a single array
         const combinedData = categories.map((category, index) => ({
-            category,
+            category: category,
             value: firstMeasureValues[index],
             secondValue: secondMeasureValues[index],
             color: colors[index],
@@ -681,7 +705,8 @@ export class PolarAreaChart implements IVisual {
         combinedData.sort((a, b) => a.order - b.order);
 
         // Extract the sorted data back into individual arrays
-        const sortedCategories = categories;
+        let sortedCategories = categories;
+        sortedCategories = combinedData.map(item => item.category);            
         const sortedValues = combinedData.map(item => item.value);
         const sortedColors = combinedData.map(item => item.color);
         const sortedColorsType = combinedData.map(item => item.colorType);
