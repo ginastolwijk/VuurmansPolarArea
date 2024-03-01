@@ -534,6 +534,11 @@ export class PolarAreaChart implements IVisual {
                     x: event.clientX,
                     y: event.clientY
                   });
+            }else{
+                this.selectionManager.showContextMenu(this.chart.data.datasets[0].selectionId[0]? null: {},{
+                    x: event.clientX,
+                    y: event.clientY,
+                })
             }
         };
     }
@@ -543,9 +548,7 @@ export class PolarAreaChart implements IVisual {
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     public update(options: VisualUpdateOptions) {
-
-        console.log('we will start the update')
-
+        
         const dataView: DataView = options.dataViews && options.dataViews[0];
         if (!dataView) return;
 
