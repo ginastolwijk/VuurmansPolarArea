@@ -625,7 +625,7 @@ export class PolarAreaChart implements IVisual {
         // First update formatting properties
         this.updateFormattingProperties(dataView.metadata.objects, dataView);
         
-        this.categoryName = dataView.metadata.columns.find(col => col.roles && col.roles.category).displayName;
+        // this.categoryName = dataView.metadata.columns.find(col => col.roles && col.roles.category).displayName;
         const categories = dataView.categorical.categories[0].values.map(value => String(value));
         const colors = new Array(categories.length).fill(null);
         const colorsType = new Array(categories.length).fill(null);
@@ -681,7 +681,7 @@ export class PolarAreaChart implements IVisual {
         combinedData.sort((a, b) => a.order - b.order);
 
         // Extract the sorted data back into individual arrays
-        const sortedCategories = combinedData.map(item => item.category);
+        const sortedCategories = categories;
         const sortedValues = combinedData.map(item => item.value);
         const sortedColors = combinedData.map(item => item.color);
         const sortedColorsType = combinedData.map(item => item.colorType);
@@ -696,14 +696,7 @@ export class PolarAreaChart implements IVisual {
             colors: sortedColors,
             colorsType: sortedColorsType,
             types: sortedTypes,
-            secondValues: sortedSecondValues,
-            labelsPresort: sortedCategories,
-            valuesPresort: sortedValues,
-            selectionIdPresort: sortedselectionId,
-            colorsPresort: sortedColors,
-            colorsTypePresort: sortedColorsType,
-            typesPresort: sortedTypes,
-            secondValuesPresort: sortedSecondValues
+            secondValues: sortedSecondValues
         };
     }
 
