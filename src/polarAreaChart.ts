@@ -14,6 +14,9 @@ import DataView = powerbiVisualsApi.DataView;
 // Selection manager
 import ISelectionManager = powerbi.extensibility.ISelectionManager;
 
+// Rendering events
+import IVisualEventService = powerbi.extensibility.IVisualEventService;
+
 // Chart.js custom visual
 export class PolarAreaChart implements IVisual {
     private chart: Chart<any, any, any>;
@@ -21,7 +24,8 @@ export class PolarAreaChart implements IVisual {
     private canvas: HTMLCanvasElement;
     private categoryName = "";
     private selectionManager: ISelectionManager;
-    private target: HTMLElement;
+    private events: IVisualEventService;
+    private element: HTMLElement;
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //// CHART PLUGINS ////
@@ -370,7 +374,10 @@ export class PolarAreaChart implements IVisual {
             }
 
             // Draw second measure lines
-            try { this.drawSecondMeasureLines(chart, ctx, chart.data.datasets[0].secondValues); } catch (error) { console.log("No second measure")}
+            try { this.drawSecondMeasureLines(chart, ctx, chart.data.datasets[0].secondValues); } catch (error) { 
+                console.log("No second measure")
+                // No need for more error handling - the visual can function without second measure, we will not show the extra line then
+            }
             ctx.restore();
         }        
     } 
@@ -411,8 +418,14 @@ export class PolarAreaChart implements IVisual {
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     private colored = -1;  // Start colored yes/no for filter out
+    private categories_org_order = [];
+    private previous_values = [];
 
     constructor(options: VisualConstructorOptions) {
+        this.events = options.host.eventService;
+        this.element = options.element;
+        this.previous_values = []; 
+        this.categories_org_order = [];
         this.host = options.host;
         this.canvas = document.createElement('canvas');
         options.element.appendChild(this.canvas);
@@ -459,18 +472,17 @@ export class PolarAreaChart implements IVisual {
                         this.chart.data.datasets[0].backgroundColor.forEach((color, index) => {
                             this.chart.data.datasets[0].backgroundColor[index] = this.adjustRgbaAlpha(this.chart.data.datasets[0].backgroundColor[index],0.5);
                         });
-                    } catch (error) {
-                        console.log('no bg colors yet')
+                    } catch (error) { 
+                        console.log('no bg colors yet');
+                        // No need for more error handling - the visual can function without the background colors, we just keep the default in that case
                     }
                 }).catch((error) => { console.error('Error clearing selection:', error); });
                 this.colored = -1;
             }
         });
 
-        // Context menu
         this.contextMenuStart();
 
-        // Create chart
         this.chart = new Chart(this.canvas.getContext('2d'), {
             type: 'polarArea',
             data: null,
@@ -480,11 +492,7 @@ export class PolarAreaChart implements IVisual {
                 maintainAspectRatio: false,
                 layout: { padding: 100 },
                 scales: {
-                    r: {
-                        min: 0,
-                        max: 100,
-                        ticks: { stepSize: 20, backdropColor: 'rgba(0, 0, 0, 0)' }
-                    }
+                    r: { min: 0, max: 100, ticks: { stepSize: 20, backdropColor: 'rgba(0, 0, 0, 0)' } }
                 },
                 plugins: {
                     legend: { display: false, },
@@ -547,9 +555,9 @@ export class PolarAreaChart implements IVisual {
     //// UPDATE ////
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    private categories_org_order = [];
-
     public update(options: VisualUpdateOptions) {
+
+        this.events.renderingStarted(options);
         
         const dataView: DataView = options.dataViews && options.dataViews[0];
         if (!dataView) return;
@@ -619,6 +627,9 @@ export class PolarAreaChart implements IVisual {
         }
 
         this.chart.update();
+        setTimeout(() => {  // Cause the Chartjs animation takes 1000ms
+            this.events.renderingFinished(options);
+        }, 1000);
     }
 
 
@@ -631,10 +642,17 @@ export class PolarAreaChart implements IVisual {
         // First update formatting properties
         this.updateFormattingProperties(dataView.metadata.objects, dataView);
 
+        if(dataView.categorical.values[0].values !== this.previous_values){
+            if(this.previous_values.length > 0){
+                this.categories_org_order = dataView.categorical.values[0].values;  // Data changed, reset categories
+            }
+            this.previous_values = dataView.categorical.values[0].values;
+        }
+
         let categories;
         try {
             // Retrieve current categories from dataView
-            categories = dataView.categorical.categories[0].values.map(value => String(value));
+            categories = dataView.categorical.categories[0].values.map(value => this.escapeHtml(String(value)));
             // Attempt to sort categories based on the original order in this.categories_org_order
             categories.sort((a, b) => {
                 let indexA = this.categories_org_order.indexOf(a);
@@ -648,7 +666,7 @@ export class PolarAreaChart implements IVisual {
             });
         } catch (error) {
             // Fallback to original order from dataView if sorting fails
-            categories = dataView.categorical.categories[0].values.map(value => String(value));
+            categories = dataView.categorical.categories[0].values.map(value => this.escapeHtml(String(value)));
         }
         
         const colors = new Array(categories.length).fill(null);
@@ -677,7 +695,7 @@ export class PolarAreaChart implements IVisual {
                 orderValues = valueColumn.values.map(value => Number(value));
             } else if (valueColumn.source.roles.type) {
                 valueColumn.values.forEach((value, index) => {
-                    const type = String(value);
+                    const type = this.escapeHtml(String(value));
                     types[index] = type;
                     colorsType[index] = this.getColorForType(type);
                 });
@@ -730,13 +748,26 @@ export class PolarAreaChart implements IVisual {
     //// FORMATTING PANE ////
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    private escapeHtml(text) {
+        return text.replace(/[&<>"']/g, function(match) {
+            switch (match) {
+                case '&': return '&amp;';
+                case '<': return '&lt;';
+                case '>': return '&gt;';
+                case '"': return '&quot;';
+                case "'": return '&#39;';
+                default: return match;
+            }
+        });
+    }
+
     private updateFormattingProperties(properties: powerbi.DataViewObjects, dataView) {
         
         if (properties && properties.outerCircles) {
             const outerCircleProperties = properties.outerCircles;
             
-            this.categoryName = dataView.metadata.columns.find(col => col.roles && col.roles.category).displayName;
-            const categories_temp = dataView.categorical.categories[0].values.map(value => String(value));
+            this.categoryName = this.escapeHtml(dataView.metadata.columns.find(col => col.roles && col.roles.category).displayName);
+            const categories_temp = dataView.categorical.categories[0].values.map(value => this.escapeHtml(String(value)));
             const colorsType = new Array(categories_temp.length).fill(null);
             const types_temp = new Array(categories_temp.length).fill(null);
 
@@ -746,7 +777,7 @@ export class PolarAreaChart implements IVisual {
                 if (Object.prototype.hasOwnProperty.call(outerCircleProperties, propName)) {
                     const bgColorPropertyValue = outerCircleProperties[propName];
                     if (typeof bgColorPropertyValue['solid']['color'] === 'string') {
-                        this[propName] = bgColorPropertyValue['solid']['color'];
+                        this[propName] = this.escapeHtml(bgColorPropertyValue['solid']['color']);
                     } else {
                         this[propName] = '#d3d3d3'; // Default color
                     }
@@ -756,7 +787,7 @@ export class PolarAreaChart implements IVisual {
 
             // Check if the font property exists in the formatting properties
             if (Object.prototype.hasOwnProperty.call(outerCircleProperties, 'fontFamily')) {
-                const FontTypePropertyValue = outerCircleProperties['fontFamily'];
+                const FontTypePropertyValue = this.escapeHtml(outerCircleProperties['fontFamily']);
                 if (typeof FontTypePropertyValue === 'string') {
                     this.fontOuterCircle = FontTypePropertyValue;
                 } else {
@@ -768,20 +799,19 @@ export class PolarAreaChart implements IVisual {
             dataView.categorical.values.forEach(valueColumn => {
                 if (valueColumn.source.roles.type) {
                     valueColumn.values.forEach((value, index) => {
-                        const type = String(value);
+                        const type = this.escapeHtml(String(value));
                         types_temp[index] = type;
                         colorsType[index] = this.getColorForType(type);
                     });
                 }
             });
         
-            // const types_temp = dataView.categorical.categories[0].values.map(value => String(value));
             this.uniqueTypes.forEach((type, index) => {
                 const propName = `bgColorType${index + 1}`; // Dynamically create the property name
                 if (Object.prototype.hasOwnProperty.call(outerCircleProperties, propName)) {
                     const bgColorPropertyValue = outerCircleProperties[propName];
                     if (typeof bgColorPropertyValue['solid']['color'] === 'string') {
-                        this[propName] = bgColorPropertyValue['solid']['color'];
+                        this[propName] = this.escapeHtml(bgColorPropertyValue['solid']['color']);
                     } else {
                         this[propName] = '#fff'; // Default color
                     }

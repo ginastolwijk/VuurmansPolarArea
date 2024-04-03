@@ -255,6 +255,15 @@
                 }
               }
             },
+            "bgColorCategory12": {
+              "type": {
+                "fill": {
+                  "solid": {
+                    "color": true
+                  }
+                }
+              }
+            },
             "bgColorCategory13": {
               "type": {
                 "fill": {
