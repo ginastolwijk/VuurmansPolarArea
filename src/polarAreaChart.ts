@@ -103,7 +103,12 @@ export class PolarAreaChart implements IVisual {
 
         // Calculate padding based on the outer circle's radius
         // Ensuring the outer circle fits within the canvas
-        const requiredPadding = (fullOuterRadius-innerRadius)*1.2; 
+        let requiredPadding = (fullOuterRadius-innerRadius)*1.3; 
+
+        if (requiredPadding < 0){
+            console.log('negative!');
+            requiredPadding = 0;
+        }
 
         return requiredPadding;
     }
@@ -171,7 +176,7 @@ export class PolarAreaChart implements IVisual {
 
     private adjustFontSizeForSpace(ctx, text, availableSpace, outerRadius) {
         const maxFontSize = outerRadius / 25;
-        const minFontSize = outerRadius / 40;
+        const minFontSize = Math.max(outerRadius / 40, 2); // min cap at 4 pixels
         let fontSize = maxFontSize;
         do {
             ctx.font = `${fontSize}px ${this.fontOuterCircle}`;
@@ -180,6 +185,10 @@ export class PolarAreaChart implements IVisual {
             }
             fontSize--;
         } while (fontSize > minFontSize);
+
+        if(fontSize < minFontSize){
+            fontSize = minFontSize;
+        }
     
         return fontSize; 
     }
@@ -280,9 +289,11 @@ export class PolarAreaChart implements IVisual {
             const chartArea = chart.chartArea;
             const centerX = chartArea.left + (chartArea.right - chartArea.left) / 2;
             const centerY = chartArea.top + (chartArea.bottom - chartArea.top) / 2;
-            const innerRadius = Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 2; 
-            const outerRadius = innerRadius + Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 14 * 1;
-            const fullOuterRadius = outerRadius + Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 14 * 1;
+            const minDimension = Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
+            if (minDimension < 10) { return; }
+            const innerRadius = minDimension / 2; 
+            const outerRadius = innerRadius + minDimension / 14;
+            const fullOuterRadius = outerRadius + minDimension / 14;
             const segmentAngleFull = 2 * Math.PI / chart.data.labels.length;
 
             // Color full (i.e., most) outer circle with the background color(s) from the format pane
@@ -375,8 +386,7 @@ export class PolarAreaChart implements IVisual {
 
             // Draw second measure lines
             try { this.drawSecondMeasureLines(chart, ctx, chart.data.datasets[0].secondValues); } catch (error) { 
-                console.log("No second measure")
-                // No need for more error handling - the visual can function without second measure, we will not show the extra line then
+                console.log("No second measure") // No need for more error handling - the visual can function without second measure, we will not show the extra line then
             }
             ctx.restore();
         }        
@@ -557,6 +567,14 @@ export class PolarAreaChart implements IVisual {
 
     public update(options: VisualUpdateOptions) {
 
+        const width = this.canvas.clientWidth;
+        const height = this.canvas.clientHeight;
+
+        if (width < 50 || height < 50) { // Check for minimal viable size
+            this.events.renderingFailed(options);
+            return; // Stop the update if the visual is too small
+        }
+
         this.events.renderingStarted(options);
         
         const dataView: DataView = options.dataViews && options.dataViews[0];
@@ -637,12 +655,20 @@ export class PolarAreaChart implements IVisual {
     //// TRANSFORM DATA ////
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    private arraysAreEqual(arr1, arr2) {
+        if (arr1.length !== arr2.length) return false;
+        for (let i = 0; i < arr1.length; i++) {
+            if (arr1[i] !== arr2[i]) return false;
+        }
+        return true;
+    }
+
     private transformData(dataView: DataView) {
 
         // First update formatting properties
         this.updateFormattingProperties(dataView.metadata.objects, dataView);
 
-        if(dataView.categorical.values[0].values !== this.previous_values){
+        if(!this.arraysAreEqual(dataView.categorical.values[0].values,this.previous_values)){
             if(this.previous_values.length > 0){
                 this.categories_org_order = dataView.categorical.values[0].values;  // Data changed, reset categories
             }
