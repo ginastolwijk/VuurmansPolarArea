@@ -385,7 +385,7 @@ export class PolarAreaChart implements IVisual {
             }
 
             // Draw second measure lines
-            try { this.drawSecondMeasureLines(chart, ctx, chart.data.datasets[0].secondValues); } catch (error) { 
+            try { this.drawSecondMeasureLines(chart, ctx, chart.data.datasets[0].secondValues, this.drawSecondValues); } catch (error) { 
                 console.log("No second measure") // No need for more error handling - the visual can function without second measure, we will not show the extra line then
             }
             ctx.restore();
@@ -393,9 +393,10 @@ export class PolarAreaChart implements IVisual {
     } 
 
     // This function is called by the plugin to draw additional elements like the second measure line
-    private drawSecondMeasureLines(chart, ctx, secondValues) {
+    private drawSecondMeasureLines(chart, ctx, secondValues, drawSecondValues) {
         const data = chart.data;
         if (!data.datasets.length) return;
+        if (drawSecondValues === 0) return;
     
         const chartArea = chart.chartArea;
         const centerX = chartArea.left + (chartArea.right - chartArea.left) / 2;
@@ -406,7 +407,7 @@ export class PolarAreaChart implements IVisual {
     
         data.labels.forEach((label, index, labels) => {
             const secondValue = secondValues[index];
-            const valueRatio = secondValue / maxRadiusValue;
+            const valueRatio = secondValue / maxRadiusValue / 1.04;
             const segmentRadius = minRadius + (maxRadius - minRadius) * valueRatio;
     
             // Calculate start and end angles for the arc
@@ -627,7 +628,10 @@ export class PolarAreaChart implements IVisual {
                 backgroundColor: transformedData.colors,
                 backgroundColorType: transformedData.colorsType,
                 dataType: transformedData.types,
-                selectionId: transformedData.selectionId
+                selectionId: transformedData.selectionId,
+                borderColor: transformedData.colors, // Set the border color to black
+                borderWidth: 1 // Optionally set the border width
+        
             }]
         };
 
@@ -663,6 +667,8 @@ export class PolarAreaChart implements IVisual {
         return true;
     }
 
+    private drawSecondValues = 1;
+
     private transformData(dataView: DataView) {
 
         // First update formatting properties
@@ -670,24 +676,32 @@ export class PolarAreaChart implements IVisual {
 
         if(!this.arraysAreEqual(dataView.categorical.values[0].values,this.previous_values)){
             if(this.previous_values.length > 0){
-                this.categories_org_order = dataView.categorical.values[0].values;  // Data changed, reset categories
+                this.categories_org_order = dataView.categorical.categories[0].values;  // Data changed, reset categories
             }
             this.previous_values = dataView.categorical.values[0].values;
+        }
+    
+        // Check the number of measure columns
+        const measureColumns = dataView.categorical.values.filter(valueColumn => valueColumn.source.roles.measure);
+        if (measureColumns.length === 1) {
+            const duplicateMeasureColumn = JSON.parse(JSON.stringify(measureColumns[0]));
+            dataView.categorical.values.push(duplicateMeasureColumn);
+            // Check if the original and duplicated columns are equal
+            const originalValues = measureColumns[0].values;
+            const duplicatedValues = duplicateMeasureColumn.values;
+            const columnsAreEqual = originalValues.every((value, index) => value === duplicatedValues[index]);
+            if (columnsAreEqual) { this.drawSecondValues = 0; }
         }
 
         let categories;
         try {
-            // Retrieve current categories from dataView
+            // Retrieve current categories from dataView and attempt to sort based on original order (this.categories_org_order)
             categories = dataView.categorical.categories[0].values.map(value => this.escapeHtml(String(value)));
-            // Attempt to sort categories based on the original order in this.categories_org_order
             categories.sort((a, b) => {
                 let indexA = this.categories_org_order.indexOf(a);
                 let indexB = this.categories_org_order.indexOf(b);
-
-                // Handling categories not found in the original order (-1 comparison result)
                 if (indexA === -1) indexA = Number.MAX_SAFE_INTEGER;
                 if (indexB === -1) indexB = Number.MAX_SAFE_INTEGER;
-
                 return indexA - indexB;
             });
         } catch (error) {
@@ -714,7 +728,6 @@ export class PolarAreaChart implements IVisual {
                 // Color first measure
                 categories.forEach((value, index) => {
                     const category = String(value);
-                    categories[index] = category;
                     colors[index] = this.hexToRgba(this.getColorForCategory(category), 0.5);
                 });
             } else if (valueColumn.source.roles.order) {
@@ -728,8 +741,7 @@ export class PolarAreaChart implements IVisual {
             }
         });
 
-        if (firstMeasureValues.length !== categories.length ||
-            secondMeasureValues.length !== categories.length) {
+        if (firstMeasureValues.length !== categories.length || secondMeasureValues.length !== categories.length) {
             return; 
         }
 
@@ -791,7 +803,6 @@ export class PolarAreaChart implements IVisual {
         
         if (properties && properties.outerCircles) {
             const outerCircleProperties = properties.outerCircles;
-            
             this.categoryName = this.escapeHtml(dataView.metadata.columns.find(col => col.roles && col.roles.category).displayName);
             const categories_temp = dataView.categorical.categories[0].values.map(value => this.escapeHtml(String(value)));
             const colorsType = new Array(categories_temp.length).fill(null);
@@ -832,7 +843,7 @@ export class PolarAreaChart implements IVisual {
                 }
             });
         
-            this.uniqueTypes.forEach((type, index) => {
+            this.uniqueTypes.sort().forEach((type, index) => {
                 const propName = `bgColorType${index + 1}`; // Dynamically create the property name
                 if (Object.prototype.hasOwnProperty.call(outerCircleProperties, propName)) {
                     const bgColorPropertyValue = outerCircleProperties[propName];
@@ -916,7 +927,7 @@ export class PolarAreaChart implements IVisual {
 
         // Generate color slices dynamically based on the unique categories
         if(this.uniqueCategories.length !== 0){
-            this.uniqueCategories.forEach((category, index) => { 
+            this.uniqueCategories.sort().forEach((category, index) => { 
                 group3_dataDesign.slices.push({
                     displayName: `${category}`,
                     uid: `outerCircle_dataDesign_bgColor2_slice${index + 1}`,
@@ -952,6 +963,7 @@ export class PolarAreaChart implements IVisual {
         // If it's a new type, add it to the array
         if (index === -1) {
             this.uniqueTypes.push(type);
+            this.uniqueTypes.sort();
             index = this.uniqueTypes.length - 1;
         }
         
@@ -962,16 +974,17 @@ export class PolarAreaChart implements IVisual {
 
     private getColorForCategory(category: string): string {
 
-        // Check if the type is already in the uniqueCategories array
+        // Check if the category is already in the uniqueCategories array
         let index = this.uniqueCategories.indexOf(category);
         
         // If it's a new category, add it to the array
         if (index === -1) {
             this.uniqueCategories.push(category);
+            this.uniqueCategories.sort();
             index = this.uniqueCategories.length - 1;
         }
 
-        // Return the color corresponding to the type index
+        // Return the color corresponding to the category index
         return this.colorPaletteInner[index % this.colorPaletteInner.length];
     }
 
